@@ -17,6 +17,8 @@ export interface INote extends Document {
   isArchived: boolean;
   isDeleted: boolean;
   deletedAt?: Date;
+  isPublic: boolean;
+  likes: mongoose.Types.ObjectId[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -39,6 +41,8 @@ const NoteSchema = new Schema<INote>(
     isArchived: { type: Boolean, default: false },
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date, default: null },
+    isPublic: { type: Boolean, default: true },
+    likes: [{ type: Schema.Types.ObjectId, ref: 'User' }],
   },
   {
     timestamps: true,

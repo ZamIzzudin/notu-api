@@ -1,6 +1,8 @@
 import { Router, Response } from 'express';
 import { UploadedFile } from 'express-fileupload';
+import mongoose from 'mongoose';
 import { Note } from '../models/Note';
+import { User } from '../models/User';
 import { uploadFile, uploadBase64, deleteFile } from '../config/upload';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 
@@ -259,6 +261,177 @@ router.post('/upload-file', async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error('Upload file error:', error);
     res.status(500).json({ error: 'Failed to upload file' });
+  }
+});
+
+// Toggle like on a note
+router.post('/:id/like', async (req: AuthRequest, res: Response) => {
+  try {
+    const noteId = req.params.id;
+    const userId = req.userId;
+
+    const note = await Note.findById(noteId);
+    if (!note) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+
+    if (!note.isPublic && note.userId !== userId) {
+      return res.status(403).json({ error: 'Cannot like private note' });
+    }
+
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+    const alreadyLiked = note.likes.some((id) => id.toString() === userId);
+
+    if (alreadyLiked) {
+      note.likes = note.likes.filter((id) => id.toString() !== userId);
+    } else {
+      note.likes.push(userObjectId);
+    }
+
+    await note.save();
+
+    res.json({
+      liked: !alreadyLiked,
+      likesCount: note.likes.length,
+    });
+  } catch (error) {
+    console.error('Like note error:', error);
+    res.status(500).json({ error: 'Failed to toggle like' });
+  }
+});
+
+// Duplicate a note (copy from friend's note to own)
+router.post('/:id/duplicate', async (req: AuthRequest, res: Response) => {
+  try {
+    const noteId = req.params.id;
+    const userId = req.userId;
+
+    const originalNote = await Note.findById(noteId);
+    if (!originalNote) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+
+    if (!originalNote.isPublic && originalNote.userId !== userId) {
+      const noteOwner = await User.findById(originalNote.userId);
+      const currentUser = await User.findById(userId);
+      
+      if (!noteOwner || !currentUser) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const isFriend = currentUser.friends.some(
+        (f) => f.toString() === originalNote.userId
+      );
+
+      if (!isFriend) {
+        return res.status(403).json({ error: 'Cannot duplicate private note' });
+      }
+    }
+
+    const duplicatedNote = new Note({
+      title: `${originalNote.title} (Copy)`,
+      content: originalNote.content,
+      color: originalNote.color,
+      images: originalNote.images,
+      userId: userId,
+      date: new Date(),
+      isPinned: false,
+      isArchived: false,
+      isDeleted: false,
+      isPublic: true,
+      likes: [],
+    });
+
+    await duplicatedNote.save();
+
+    res.status(201).json(duplicatedNote);
+  } catch (error) {
+    console.error('Duplicate note error:', error);
+    res.status(500).json({ error: 'Failed to duplicate note' });
+  }
+});
+
+// Toggle note visibility (public/private)
+router.put('/:id/visibility', async (req: AuthRequest, res: Response) => {
+  try {
+    const noteId = req.params.id;
+    const { isPublic } = req.body;
+
+    const note = await Note.findOne({ _id: noteId, userId: req.userId });
+    if (!note) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+
+    note.isPublic = isPublic;
+    await note.save();
+
+    res.json({
+      message: 'Note visibility updated',
+      isPublic: note.isPublic,
+    });
+  } catch (error) {
+    console.error('Update visibility error:', error);
+    res.status(500).json({ error: 'Failed to update visibility' });
+  }
+});
+
+// Get friend's public notes
+router.get('/user/:userId', async (req: AuthRequest, res: Response) => {
+  try {
+    const targetUserId = req.params.userId;
+    const currentUserId = req.userId;
+
+    const [currentUser, targetUser] = await Promise.all([
+      User.findById(currentUserId),
+      User.findById(targetUserId),
+    ]);
+
+    if (!currentUser || !targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const isFriend = currentUser.friends.some((f) => f.toString() === targetUserId);
+    const isOwn = currentUserId === targetUserId;
+
+    if (!isOwn && !isFriend) {
+      return res.status(403).json({ error: 'Not authorized to view notes' });
+    }
+
+    if (!isOwn && targetUser.isPrivate) {
+      return res.status(403).json({ error: 'User profile is private' });
+    }
+
+    const filter: any = {
+      userId: targetUserId,
+      isDeleted: { $ne: true },
+      isArchived: { $ne: true },
+    };
+
+    if (!isOwn) {
+      filter.isPublic = true;
+    }
+
+    const notes = await Note.find(filter).sort({ isPinned: -1, date: -1 });
+
+    const notesWithLikeInfo = notes.map((note) => ({
+      _id: note._id,
+      title: note.title,
+      content: note.content,
+      color: note.color,
+      images: note.images,
+      date: note.date,
+      userId: note.userId,
+      isPinned: note.isPinned,
+      isPublic: note.isPublic,
+      likesCount: note.likes?.length || 0,
+      isLiked: note.likes?.some((id) => id.toString() === currentUserId) || false,
+      isOwn,
+    }));
+
+    res.json(notesWithLikeInfo);
+  } catch (error) {
+    console.error('Get user notes error:', error);
+    res.status(500).json({ error: 'Failed to get user notes' });
   }
 });
 
