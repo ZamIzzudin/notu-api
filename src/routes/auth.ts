@@ -247,8 +247,8 @@ router.put('/profile', authMiddleware, async (req: AuthRequest, res: Response) =
 router.get('/users/search', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const { q } = req.query;
-    if (!q || typeof q !== 'string' || q.length < 2) {
-      return res.status(400).json({ error: 'Search query must be at least 2 characters' });
+    if (!q || typeof q !== 'string' || q.length < 1) {
+      return res.status(400).json({ error: 'Search query is required' });
     }
 
     const users = await User.find({
